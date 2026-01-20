@@ -4,16 +4,17 @@ import "time"
 
 // HostInfo contains system identification information
 type HostInfo struct {
-	Hostname        string `json:"hostname"`
-	OS              string `json:"os"`
-	Platform        string `json:"platform"`
-	PlatformVersion string `json:"platform_version"`
-	KernelVersion   string `json:"kernel_version"`
-	KernelArch      string `json:"kernel_arch"`
-	Uptime          uint64 `json:"uptime"`
-	UptimeHuman     string `json:"uptime_human"`
-	BootTime        uint64 `json:"boot_time"`
-	Procs           uint64 `json:"procs"`
+	Hostname        string        `json:"hostname"`
+	OS              string        `json:"os"`
+	Platform        string        `json:"platform"`
+	PlatformVersion string        `json:"platform_version"`
+	KernelVersion   string        `json:"kernel_version"`
+	KernelArch      string        `json:"kernel_arch"`
+	Uptime          uint64        `json:"uptime"`
+	UptimeHuman     string        `json:"uptime_human"`
+	BootTime        uint64        `json:"boot_time"`
+	Procs           uint64        `json:"procs"`
+	Temperatures    []Temperature `json:"temperatures,omitempty"`
 }
 
 // CPUInfo contains CPU usage information

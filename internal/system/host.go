@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/shirou/gopsutil/v4/host"
+	"github.com/shirou/gopsutil/v4/sensors"
 )
 
 // GetHostInfo retrieves system host information
@@ -12,6 +13,20 @@ func GetHostInfo() (*HostInfo, error) {
 	info, err := host.Info()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get host info: %w", err)
+	}
+
+	// Get temperature sensors
+	var temps []Temperature
+	sensorStats, err := sensors.SensorsTemperatures()
+	if err == nil {
+		for _, sensor := range sensorStats {
+			if sensor.Temperature > 0 {
+				temps = append(temps, Temperature{
+					SensorKey:   sensor.SensorKey,
+					Temperature: sensor.Temperature,
+				})
+			}
+		}
 	}
 
 	return &HostInfo{
@@ -25,6 +40,7 @@ func GetHostInfo() (*HostInfo, error) {
 		UptimeHuman:     formatUptime(info.Uptime),
 		BootTime:        info.BootTime,
 		Procs:           info.Procs,
+		Temperatures:    temps,
 	}, nil
 }
 
