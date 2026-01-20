@@ -17,12 +17,13 @@ import (
 
 // Server represents the HTTP server
 type Server struct {
-	cfg      *config.Config
-	router   *gin.Engine
-	handlers *Handlers
-	auth     *AuthService
-	limiter  *RateLimiter
-	httpServer *http.Server
+	cfg           *config.Config
+	router        *gin.Engine
+	handlers      *Handlers
+	setupHandlers *SetupHandlers
+	auth          *AuthService
+	limiter       *RateLimiter
+	httpServer    *http.Server
 }
 
 // New creates a new server instance
@@ -39,13 +40,15 @@ func New(cfg *config.Config) *Server {
 	auth := NewAuthService(cfg.APIKey, cfg.JWTSecret)
 	limiter := NewRateLimiter(cfg.RateLimitRPS)
 	handlers := NewHandlers(cfg)
+	setupHandlers := NewSetupHandlers(cfg)
 
 	s := &Server{
-		cfg:      cfg,
-		router:   router,
-		handlers: handlers,
-		auth:     auth,
-		limiter:  limiter,
+		cfg:           cfg,
+		router:        router,
+		handlers:      handlers,
+		setupHandlers: setupHandlers,
+		auth:          auth,
+		limiter:       limiter,
 	}
 
 	s.setupMiddleware()
@@ -71,6 +74,16 @@ func (s *Server) setupMiddleware() {
 func (s *Server) setupRoutes() {
 	// Health check (no auth)
 	s.router.GET("/health", s.handlers.HealthCheck)
+
+	// Setup routes (no auth required in setup mode)
+	if s.cfg.SetupMode {
+		setup := s.router.Group("/setup")
+		{
+			setup.GET("", s.setupHandlers.SetupPage)
+			setup.POST("/generate", s.setupHandlers.GenerateKey)
+			setup.POST("/save", s.setupHandlers.SaveKey)
+		}
+	}
 
 	// API routes (require auth)
 	api := s.router.Group("/api")
@@ -121,7 +134,16 @@ func (s *Server) setupRoutes() {
 
 		// Real-time events (SSE)
 		api.GET("/events", s.handlers.StreamEvents)
+
+		// Settings (authenticated)
+		api.GET("/settings", s.setupHandlers.GetSettings)
+		api.PUT("/settings", s.setupHandlers.UpdateSettings)
+		api.POST("/settings/generate-key", s.setupHandlers.GenerateKey)
+		api.POST("/settings/api-key", s.setupHandlers.SaveKey)
 	}
+
+	// Settings page (requires auth via query param)
+	s.router.GET("/settings", s.setupHandlers.SettingsPage)
 }
 
 // Run starts the HTTP server

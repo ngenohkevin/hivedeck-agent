@@ -18,13 +18,25 @@ func TestLoadWithDefaults(t *testing.T) {
 	assert.NotEmpty(t, cfg.AllowedTasks)
 }
 
-func TestLoadMissingAPIKey(t *testing.T) {
+func TestLoadMissingAPIKey_EntersSetupMode(t *testing.T) {
 	// Clear environment
 	os.Unsetenv("API_KEY")
 
-	_, err := Load()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "API_KEY is required")
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.True(t, cfg.SetupMode, "should enter setup mode when API key is missing")
+	assert.Empty(t, cfg.APIKey)
+}
+
+func TestGenerateAPIKey(t *testing.T) {
+	key, err := GenerateAPIKey()
+	require.NoError(t, err)
+	assert.Len(t, key, 64) // 32 bytes = 64 hex characters
+
+	// Generate another key to ensure uniqueness
+	key2, err := GenerateAPIKey()
+	require.NoError(t, err)
+	assert.NotEqual(t, key, key2)
 }
 
 func TestLoadWithEnvVars(t *testing.T) {

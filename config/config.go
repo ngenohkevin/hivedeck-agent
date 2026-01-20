@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strconv"
@@ -9,6 +11,15 @@ import (
 
 	"github.com/joho/godotenv"
 )
+
+// GenerateAPIKey generates a secure random API key
+func GenerateAPIKey() (string, error) {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", fmt.Errorf("failed to generate random bytes: %w", err)
+	}
+	return hex.EncodeToString(bytes), nil
+}
 
 // Config holds all configuration for the agent
 type Config struct {
@@ -36,6 +47,10 @@ type Config struct {
 	AllowedServices []string
 	AllowedTasks    map[string]Task
 	AllowedPaths    []string
+
+	// Setup mode
+	SetupMode bool
+	EnvFile   string
 }
 
 // Task represents a pre-defined safe command
@@ -102,8 +117,11 @@ func DefaultTasks() map[string]Task {
 
 // Load reads configuration from environment variables
 func Load() (*Config, error) {
+	// Determine .env file path
+	envFile := getEnvFile()
+
 	// Load .env file if it exists
-	_ = godotenv.Load()
+	_ = godotenv.Load(envFile)
 
 	cfg := &Config{
 		Port:           getEnvInt("PORT", 8091),
@@ -132,11 +150,14 @@ func Load() (*Config, error) {
 			"/opt",
 			"/tmp",
 		}),
+		SetupMode: false,
+		EnvFile:   envFile,
 	}
 
-	// Validate required fields
+	// Check if API key is configured
 	if cfg.APIKey == "" {
-		return nil, fmt.Errorf("API_KEY is required")
+		cfg.SetupMode = true
+		return cfg, nil
 	}
 
 	if cfg.JWTSecret == "" {
@@ -145,6 +166,94 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// getEnvFile returns the path to the .env file
+func getEnvFile() string {
+	// Check if running from a specific directory
+	if envFile := os.Getenv("ENV_FILE"); envFile != "" {
+		return envFile
+	}
+
+	// Try to find .env in current directory or executable directory
+	if _, err := os.Stat(".env"); err == nil {
+		return ".env"
+	}
+
+	// Get executable directory
+	exe, err := os.Executable()
+	if err == nil {
+		dir := strings.TrimSuffix(exe, "/hivedeck-agent")
+		envPath := dir + "/.env"
+		if _, err := os.Stat(envPath); err == nil {
+			return envPath
+		}
+	}
+
+	return ".env"
+}
+
+// SaveAPIKey saves the API key to the .env file
+func (c *Config) SaveAPIKey(apiKey string) error {
+	updates := map[string]string{"API_KEY": apiKey}
+	if err := UpdateEnvFile(c.EnvFile, updates); err != nil {
+		return err
+	}
+
+	// Update config
+	c.APIKey = apiKey
+	c.JWTSecret = apiKey
+	c.SetupMode = false
+
+	return nil
+}
+
+// UpdateEnvFile updates or adds environment variables in a .env file
+func UpdateEnvFile(envFile string, updates map[string]string) error {
+	// Read existing .env content
+	existingContent := ""
+	if data, err := os.ReadFile(envFile); err == nil {
+		existingContent = string(data)
+	}
+
+	// Parse existing lines
+	lines := strings.Split(existingContent, "\n")
+	found := make(map[string]bool)
+
+	// Update existing keys
+	for i, line := range lines {
+		for key, value := range updates {
+			if strings.HasPrefix(line, key+"=") {
+				lines[i] = key + "=" + value
+				found[key] = true
+				break
+			}
+		}
+	}
+
+	// Add missing keys at the beginning
+	var newLines []string
+	for key, value := range updates {
+		if !found[key] {
+			newLines = append(newLines, key+"="+value)
+		}
+	}
+	if len(newLines) > 0 {
+		lines = append(newLines, lines...)
+	}
+
+	// Remove empty lines at the end
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
+	}
+
+	// Write back to .env file
+	content := strings.Join(lines, "\n") + "\n"
+	if err := os.WriteFile(envFile, []byte(content), 0600); err != nil {
+		return fmt.Errorf("failed to write .env file: %w", err)
+	}
+
+	return nil
 }
 
 // LoadWithDefaults loads config with defaults for testing
