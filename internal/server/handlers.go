@@ -43,7 +43,7 @@ func NewHandlers(cfg *config.Config) *Handlers {
 		processManager:   process.NewManager(),
 		serviceManager:   systemd.NewManager(cfg.AllowedServices),
 		journalReader:    systemd.NewJournalReader(),
-		fileBrowser:      files.NewBrowser(nil),
+		fileBrowser:      files.NewBrowser(cfg.AllowedPaths),
 		taskManager:      tasks.NewManager(cfg.AllowedTasks),
 	}
 

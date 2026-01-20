@@ -35,6 +35,7 @@ type Config struct {
 	// Allowed operations
 	AllowedServices []string
 	AllowedTasks    map[string]Task
+	AllowedPaths    []string
 }
 
 // Task represents a pre-defined safe command
@@ -124,6 +125,13 @@ func Load() (*Config, error) {
 			"tailscaled",
 		}),
 		AllowedTasks: DefaultTasks(),
+		AllowedPaths: getEnvSlice("ALLOWED_PATHS", []string{
+			"/var/log",
+			"/etc",
+			"/home",
+			"/opt",
+			"/tmp",
+		}),
 	}
 
 	// Validate required fields
@@ -154,6 +162,7 @@ func LoadWithDefaults() *Config {
 		LogLevel:        "info",
 		AllowedServices: []string{"test-service"},
 		AllowedTasks:    DefaultTasks(),
+		AllowedPaths:    []string{"/tmp", "/var/log"},
 	}
 }
 
