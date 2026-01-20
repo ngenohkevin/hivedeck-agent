@@ -43,7 +43,7 @@ func (m *Manager) Close() error {
 
 // ListContainers returns all containers
 func (m *Manager) ListContainers(ctx context.Context, all bool) (*ContainerList, error) {
-	containers, err := m.client.ContainerList(ctx, container.ListOptions{
+	containers, err := m.client.ContainerList(ctx, types.ContainerListOptions{
 		All:  all,
 		Size: true,
 	})
@@ -138,7 +138,7 @@ func (m *Manager) GetContainer(ctx context.Context, id string) (*ContainerInfo, 
 
 // StartContainer starts a container
 func (m *Manager) StartContainer(ctx context.Context, id string) (*ContainerAction, error) {
-	if err := m.client.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
+	if err := m.client.ContainerStart(ctx, id, types.ContainerStartOptions{}); err != nil {
 		return &ContainerAction{
 			ID:      id,
 			Action:  "start",
@@ -197,7 +197,7 @@ func (m *Manager) RestartContainer(ctx context.Context, id string) (*ContainerAc
 
 // GetContainerLogs returns container logs
 func (m *Manager) GetContainerLogs(ctx context.Context, id string, opts LogOptions) ([]string, error) {
-	options := container.LogsOptions{
+	options := types.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Timestamps: opts.Timestamps,
@@ -232,7 +232,7 @@ func (m *Manager) GetContainerLogs(ctx context.Context, id string, opts LogOptio
 
 // StreamContainerLogs streams container logs in real-time
 func (m *Manager) StreamContainerLogs(ctx context.Context, id string, logChan chan<- string) error {
-	options := container.LogsOptions{
+	options := types.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Follow:     true,

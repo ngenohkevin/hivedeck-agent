@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -372,7 +373,7 @@ func (h *Handlers) StreamLogs(c *gin.Context) {
 		return
 	}
 
-	c.Stream(func(w gin.ResponseWriter) bool {
+	c.Stream(func(w io.Writer) bool {
 		select {
 		case entry := <-entryChan:
 			data, _ := json.Marshal(entry)
@@ -396,7 +397,7 @@ func (h *Handlers) StreamEvents(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	c.Stream(func(w gin.ResponseWriter) bool {
+	c.Stream(func(w io.Writer) bool {
 		select {
 		case <-ticker.C:
 			metrics, err := h.metricsCollector.GetAllMetrics()
