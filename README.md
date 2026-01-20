@@ -32,12 +32,28 @@ make build-arm64  # For Raspberry Pi
 sudo ./scripts/install.sh
 ```
 
+### First-Time Setup (No API Key)
+
+When the agent starts without an API key, it enters **Setup Mode**:
+
+```
+⚠️  No API key configured - starting in SETUP MODE
+📋 Open http://<server>:8091/setup to configure the agent
+🔒 After setup, restart the agent to enable authentication
+```
+
+1. Open `http://<server-ip>:8091/setup` in your browser
+2. Click **Generate API Key** to create a secure key
+3. Copy the key (you'll need it for the dashboard)
+4. Click **Save** to write it to `.env`
+5. Restart the agent: `sudo systemctl restart hivedeck-agent`
+
 ### Configuration
 
 Edit `.env` to configure the agent:
 
 ```env
-# Required
+# Required (auto-generated via setup page or manually set)
 API_KEY=your-secure-api-key
 
 # Optional
@@ -45,7 +61,9 @@ PORT=8091
 HOST=0.0.0.0
 LOG_LEVEL=info
 DOCKER_ENABLED=true
-ALLOWED_SERVICES=routerctl-agent,hivedeck-agent,docker,nginx
+ALLOWED_SERVICES=routerctl-agent,hivedeck-agent,docker,nginx,ssh,tailscaled
+ALLOWED_PATHS=/var/log,/etc,/home,/opt,/tmp
+WRITE_TIMEOUT_SECONDS=86400  # 24h for SSE connections
 ```
 
 ### Running
@@ -152,7 +170,20 @@ Dangerous tasks require `?confirm=true`.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/events` | GET | SSE metrics stream |
+| `/api/events` | GET | SSE metrics stream (24h timeout) |
+
+### Setup & Settings
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/setup` | GET | Setup page (only in setup mode) |
+| `/setup/generate` | POST | Generate new API key |
+| `/setup/save` | POST | Save API key to .env |
+| `/settings` | GET | Settings page (requires `?key=`) |
+| `/api/settings` | GET | Get current settings |
+| `/api/settings` | PUT | Update settings |
+| `/api/settings/generate-key` | POST | Generate new API key |
+| `/api/settings/api-key` | POST | Save new API key |
 
 ## Example Usage
 
@@ -242,6 +273,37 @@ hivedeck-agent/
 | `who` | `who` | Logged-in users | No |
 | `pi-temp` | `vcgencmd measure_temp` | Pi temperature | No |
 | `reboot` | `reboot` | Reboot system | Yes |
+
+## Tailscale Serve (HTTPS Access)
+
+You can expose the agent with automatic SSL via Tailscale Serve:
+
+```bash
+# Enable Tailscale Serve (run on the server)
+sudo tailscale serve --bg http://127.0.0.1:8091
+```
+
+This creates an HTTPS endpoint accessible within your tailnet:
+```
+https://<hostname>.tail<xxxxx>.ts.net/
+```
+
+Example URLs:
+```bash
+# Health check (no auth)
+https://pi.taila26a58.ts.net/health
+
+# Metrics (with auth)
+https://pi.taila26a58.ts.net/api/metrics?token=YOUR_API_KEY
+
+# Settings page
+https://pi.taila26a58.ts.net/settings?key=YOUR_API_KEY
+```
+
+To disable:
+```bash
+sudo tailscale serve --https=443 off
+```
 
 ## Security
 
