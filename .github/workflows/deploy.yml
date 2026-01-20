@@ -1,0 +1,87 @@
+name: Deploy Hivedeck Agent
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run tests
+        run: go test -v -race ./...
+
+      - name: Run linter
+        uses: golangci/golangci-lint-action@v4
+        with:
+          version: latest
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Build for ARM64
+        run: |
+          GOOS=linux GOARCH=arm64 go build -o hivedeck-agent .
+          chmod +x hivedeck-agent
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Deploy to Raspberry Pi
+        run: |
+          # Wait for Tailscale to be ready
+          sleep 5
+
+          # Copy binary to Pi
+          scp -o StrictHostKeyChecking=no hivedeck-agent root@pi:/tmp/hivedeck-agent
+
+          # Deploy on Pi
+          ssh -o StrictHostKeyChecking=no root@pi << 'EOF'
+            set -e
+
+            # Stop existing service
+            systemctl stop hivedeck-agent || true
+
+            # Move binary to install location
+            mkdir -p /home/ngenoh/dev/backend/hivedeck-agent
+            mv /tmp/hivedeck-agent /home/ngenoh/dev/backend/hivedeck-agent/
+            chmod +x /home/ngenoh/dev/backend/hivedeck-agent/hivedeck-agent
+
+            # Start service
+            systemctl start hivedeck-agent
+
+            # Verify it's running
+            sleep 2
+            systemctl is-active hivedeck-agent
+          EOF
+
+      - name: Verify deployment
+        run: |
+          # Test health endpoint
+          curl -sf http://pi:8091/health || exit 1
+          echo "Deployment successful!"
