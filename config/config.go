@@ -127,7 +127,7 @@ func Load() (*Config, error) {
 		Port:           getEnvInt("PORT", 8091),
 		Host:           getEnv("HOST", "0.0.0.0"),
 		ReadTimeout:    time.Duration(getEnvInt("READ_TIMEOUT_SECONDS", 30)) * time.Second,
-		WriteTimeout:   time.Duration(getEnvInt("WRITE_TIMEOUT_SECONDS", 300)) * time.Second,
+		WriteTimeout:   time.Duration(getEnvInt("WRITE_TIMEOUT_SECONDS", 86400)) * time.Second, // 24h for SSE
 		APIKey:         getEnv("API_KEY", ""),
 		JWTSecret:      getEnv("JWT_SECRET", ""),
 		AllowedOrigins: getEnvSlice("ALLOWED_ORIGINS", []string{"*"}),
@@ -262,7 +262,7 @@ func LoadWithDefaults() *Config {
 		Port:            8091,
 		Host:            "0.0.0.0",
 		ReadTimeout:     30 * time.Second,
-		WriteTimeout:    300 * time.Second,
+		WriteTimeout:    86400 * time.Second, // 24h for SSE
 		APIKey:          "test-api-key",
 		JWTSecret:       "test-jwt-secret",
 		AllowedOrigins:  []string{"*"},
