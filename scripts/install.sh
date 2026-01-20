@@ -63,7 +63,7 @@ fi
 cat > /etc/systemd/system/${SERVICE_NAME}.service << EOF
 [Unit]
 Description=Hivedeck Agent - Server Monitoring Agent
-Documentation=https://github.com/devdiltech/hivedeck-agent
+Documentation=https://github.com/ngenohkevin/hivedeck-agent
 After=network.target
 
 [Service]
