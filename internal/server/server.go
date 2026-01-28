@@ -125,6 +125,7 @@ func (s *Server) setupRoutes() {
 
 		// Files
 		api.GET("/files", s.handlers.ListDirectory)
+		api.GET("/files/paths", s.handlers.GetAllowedPaths)
 		api.GET("/files/content", s.handlers.GetFileContent)
 		api.GET("/files/diskusage", s.handlers.GetDiskUsage)
 

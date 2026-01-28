@@ -12,21 +12,37 @@ import (
 // Manager handles systemd service operations
 type Manager struct {
 	allowedServices map[string]bool
+	allowAll        bool
 }
 
 // NewManager creates a new systemd manager
 func NewManager(allowedServices []string) *Manager {
-	allowed := make(map[string]bool)
+	// Check for wildcard "*" which means allow all services
+	allowAll := false
 	for _, s := range allowedServices {
-		allowed[s] = true
+		if s == "*" {
+			allowAll = true
+			break
+		}
+	}
+
+	allowed := make(map[string]bool)
+	if !allowAll {
+		for _, s := range allowedServices {
+			allowed[s] = true
+		}
 	}
 	return &Manager{
 		allowedServices: allowed,
+		allowAll:        allowAll,
 	}
 }
 
 // IsAllowed checks if a service is in the allowed list
 func (m *Manager) IsAllowed(name string) bool {
+	if m.allowAll {
+		return true
+	}
 	// Strip .service suffix for comparison
 	name = strings.TrimSuffix(name, ".service")
 	return m.allowedServices[name]
@@ -52,9 +68,9 @@ func (m *Manager) List(ctx context.Context) (*ServiceList, error) {
 			continue
 		}
 
-		// Only include allowed services if we have an allowlist
+		// Only include allowed services if we have an allowlist (skip if allowAll)
 		name := strings.TrimSuffix(unit.Name, ".service")
-		if len(m.allowedServices) > 0 && !m.allowedServices[name] {
+		if !m.allowAll && len(m.allowedServices) > 0 && !m.allowedServices[name] {
 			continue
 		}
 

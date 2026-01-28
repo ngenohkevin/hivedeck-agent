@@ -24,11 +24,21 @@ const (
 // Browser handles file system operations (read-only)
 type Browser struct {
 	allowedPaths []string
+	allowAll     bool
 }
 
 // NewBrowser creates a new file browser
 func NewBrowser(allowedPaths []string) *Browser {
-	if len(allowedPaths) == 0 {
+	// Check for wildcard "*" which means allow all paths
+	allowAll := false
+	for _, p := range allowedPaths {
+		if p == "*" {
+			allowAll = true
+			break
+		}
+	}
+
+	if !allowAll && len(allowedPaths) == 0 {
 		// Default allowed paths
 		allowedPaths = []string{
 			"/var/log",
@@ -40,11 +50,24 @@ func NewBrowser(allowedPaths []string) *Browser {
 	}
 	return &Browser{
 		allowedPaths: allowedPaths,
+		allowAll:     allowAll,
 	}
+}
+
+// GetAllowedPaths returns the list of allowed paths for the UI
+func (b *Browser) GetAllowedPaths() []string {
+	if b.allowAll {
+		return []string{"/"}
+	}
+	return b.allowedPaths
 }
 
 // IsPathAllowed checks if a path is within allowed directories
 func (b *Browser) IsPathAllowed(path string) bool {
+	if b.allowAll {
+		return true
+	}
+
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return false

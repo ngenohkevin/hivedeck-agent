@@ -536,6 +536,14 @@ func (h *Handlers) GetContainerLogs(c *gin.Context) {
 
 // File browser handlers
 
+// GetAllowedPaths handles GET /api/files/paths
+func (h *Handlers) GetAllowedPaths(c *gin.Context) {
+	paths := h.fileBrowser.GetAllowedPaths()
+	c.JSON(http.StatusOK, gin.H{
+		"paths": paths,
+	})
+}
+
 // ListDirectory handles GET /api/files
 func (h *Handlers) ListDirectory(c *gin.Context) {
 	path := c.DefaultQuery("path", "/")
