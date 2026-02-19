@@ -1,12 +1,15 @@
-name: Deploy to Raspberry Pi
+name: Deploy Hivedeck Agent
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
+env:
+  SSH_OPTS: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+
 jobs:
-  deploy:
+  build-and-test:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -20,9 +23,27 @@ jobs:
       - name: Run tests
         run: go test -v ./...
 
-      - name: Build for ARM64
+      - name: Build binaries
         run: |
-          GOOS=linux GOARCH=arm64 go build -ldflags "-X main.Version=${{ github.sha }}" -o hivedeck-agent .
+          GOOS=linux GOARCH=arm64 go build -ldflags "-X main.Version=${{ github.sha }}" -o hivedeck-agent-arm64 .
+          GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=${{ github.sha }}" -o hivedeck-agent-amd64 .
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: |
+            hivedeck-agent-arm64
+            hivedeck-agent-amd64
+
+  deploy-pi:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries
 
       - name: Connect to Tailscale
         uses: tailscale/github-action@v4
@@ -33,23 +54,16 @@ jobs:
 
       - name: Deploy to Pi
         run: |
-          # Wait for Tailscale to be ready
           sleep 5
 
-          # Ensure directory exists
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@pi \
-            'mkdir -p /home/ngenoh/dev/backend/hivedeck-agent'
+          ssh $SSH_OPTS root@pi 'mkdir -p /home/ngenoh/dev/backend/hivedeck-agent'
 
-          # Copy binary to Pi
-          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            hivedeck-agent root@pi:/home/ngenoh/dev/backend/hivedeck-agent/hivedeck-agent.new
+          scp $SSH_OPTS hivedeck-agent-arm64 root@pi:/home/ngenoh/dev/backend/hivedeck-agent/hivedeck-agent.new
 
-          # Replace binary and restart service
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@pi << 'EOF'
+          ssh $SSH_OPTS root@pi << 'EOF'
             set -e
             cd /home/ngenoh/dev/backend/hivedeck-agent
 
-            # Create .env if it doesn't exist
             if [ ! -f .env ]; then
               cat > .env << 'ENVEOF'
           PORT=8091
@@ -65,7 +79,6 @@ jobs:
               echo "Created default .env file"
             fi
 
-            # Create systemd service if it doesn't exist
             if [ ! -f /etc/systemd/system/hivedeck-agent.service ]; then
               cat > /etc/systemd/system/hivedeck-agent.service << 'SVCEOF'
           [Unit]
@@ -90,21 +103,108 @@ jobs:
               echo "Created and enabled systemd service"
             fi
 
-            # Stop existing service
             systemctl stop hivedeck-agent || true
-
-            # Replace binary
             mv hivedeck-agent.new hivedeck-agent
             chmod +x hivedeck-agent
-
-            # Start service
             systemctl start hivedeck-agent
             sleep 2
             systemctl status hivedeck-agent --no-pager
           EOF
 
-      - name: Verify deployment
+      - name: Verify Pi deployment
         run: |
           sleep 3
           curl -sf http://pi:8091/health || exit 1
-          echo "Deployment successful!"
+          echo "Pi deployment successful!"
+
+  deploy-vps:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        server:
+          - name: vps
+            host: vps
+            allowed_services: "nginx,tor@default,docker,ssh,tailscaled,hivedeck-agent"
+          - name: iopulse
+            host: iopulse
+            allowed_services: "docker,ssh,tailscaled,hivedeck-agent"
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Deploy to ${{ matrix.server.name }}
+        run: |
+          sleep 5
+
+          ssh $SSH_OPTS root@${{ matrix.server.host }} 'mkdir -p /opt/hivedeck-agent'
+
+          scp $SSH_OPTS hivedeck-agent-amd64 root@${{ matrix.server.host }}:/opt/hivedeck-agent/hivedeck-agent.new
+
+          ssh $SSH_OPTS root@${{ matrix.server.host }} << EOF
+            set -e
+            cd /opt/hivedeck-agent
+
+            if [ ! -f .env ]; then
+              cat > .env << 'ENVEOF'
+          PORT=8091
+          HOST=0.0.0.0
+          API_KEY=change-me-to-a-secure-key
+          JWT_SECRET=change-me-to-a-secure-secret
+          ALLOWED_ORIGINS=*
+          RATE_LIMIT_RPS=100
+          DOCKER_ENABLED=true
+          LOG_LEVEL=info
+          ALLOWED_SERVICES=${{ matrix.server.allowed_services }}
+          ALLOWED_PATHS=/var/log,/etc,/opt
+          ENVEOF
+              echo "Created default .env file"
+            fi
+
+            if [ ! -f /etc/systemd/system/hivedeck-agent.service ]; then
+              cat > /etc/systemd/system/hivedeck-agent.service << 'SVCEOF'
+          [Unit]
+          Description=Hivedeck Agent - Server Monitoring Agent
+          Documentation=https://github.com/ngenohkevin/hivedeck-agent
+          After=network.target docker.service
+          Wants=docker.service
+
+          [Service]
+          Type=simple
+          User=root
+          WorkingDirectory=/opt/hivedeck-agent
+          ExecStart=/opt/hivedeck-agent/hivedeck-agent
+          Restart=always
+          RestartSec=5
+          EnvironmentFile=/opt/hivedeck-agent/.env
+
+          [Install]
+          WantedBy=multi-user.target
+          SVCEOF
+              systemctl daemon-reload
+              systemctl enable hivedeck-agent
+              echo "Created and enabled systemd service"
+            fi
+
+            systemctl stop hivedeck-agent || true
+            mv hivedeck-agent.new hivedeck-agent
+            chmod +x hivedeck-agent
+            systemctl start hivedeck-agent
+            sleep 2
+            systemctl status hivedeck-agent --no-pager
+          EOF
+
+      - name: Verify ${{ matrix.server.name }} deployment
+        run: |
+          sleep 3
+          curl -sf http://${{ matrix.server.host }}:8091/health || exit 1
+          echo "${{ matrix.server.name }} deployment successful!"
