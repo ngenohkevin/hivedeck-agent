@@ -10,6 +10,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 )
 
@@ -43,7 +44,7 @@ func (m *Manager) Close() error {
 
 // ListContainers returns all containers
 func (m *Manager) ListContainers(ctx context.Context, all bool) (*ContainerList, error) {
-	containers, err := m.client.ContainerList(ctx, types.ContainerListOptions{
+	containers, err := m.client.ContainerList(ctx, container.ListOptions{
 		All:  all,
 		Size: true,
 	})
@@ -138,7 +139,7 @@ func (m *Manager) GetContainer(ctx context.Context, id string) (*ContainerInfo, 
 
 // StartContainer starts a container
 func (m *Manager) StartContainer(ctx context.Context, id string) (*ContainerAction, error) {
-	if err := m.client.ContainerStart(ctx, id, types.ContainerStartOptions{}); err != nil {
+	if err := m.client.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
 		return &ContainerAction{
 			ID:      id,
 			Action:  "start",
@@ -197,7 +198,7 @@ func (m *Manager) RestartContainer(ctx context.Context, id string) (*ContainerAc
 
 // GetContainerLogs returns container logs
 func (m *Manager) GetContainerLogs(ctx context.Context, id string, opts LogOptions) ([]string, error) {
-	options := types.ContainerLogsOptions{
+	options := container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Timestamps: opts.Timestamps,
@@ -232,7 +233,7 @@ func (m *Manager) GetContainerLogs(ctx context.Context, id string, opts LogOptio
 
 // StreamContainerLogs streams container logs in real-time
 func (m *Manager) StreamContainerLogs(ctx context.Context, id string, logChan chan<- string) error {
-	options := types.ContainerLogsOptions{
+	options := container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Follow:     true,
@@ -324,7 +325,7 @@ func (m *Manager) GetContainerStats(ctx context.Context, id string) (*ContainerS
 
 // ListImages returns all images
 func (m *Manager) ListImages(ctx context.Context) ([]ImageInfo, error) {
-	images, err := m.client.ImageList(ctx, types.ImageListOptions{})
+	images, err := m.client.ImageList(ctx, image.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list images: %w", err)
 	}
