@@ -20,11 +20,16 @@ type Manager struct {
 func NewManager() *Manager {
 	return &Manager{
 		AllowedProcessNames: map[string]bool{
-			"claude":    true, // Claude Code CLI
-			"node":      true, // Claude Code runs as node processes
-			"bun":       true, // Telegram plugin runtime
-			"npx":       true, // MCP servers
-			"tmux":      true, // Terminal multiplexer sessions
+			"claude":          true, // Claude Code CLI
+			"node":            true, // Claude Code runs as node processes
+			"bun":             true, // Telegram plugin runtime
+			"npx":             true, // MCP servers
+			"npm exec":        true, // MCP servers (npm exec form)
+			"npm":             true, // npm processes
+			"python":          true, // Python MCP servers (routeros)
+			"tmux: server":    true, // tmux server process
+			"tmux":            true, // tmux processes
+			"uvx":             true, // Python tool runner (jellyfin MCP)
 		},
 	}
 }
@@ -148,7 +153,16 @@ func (m *Manager) Kill(pid int32, signal int) (*KillResponse, error) {
 
 // IsAllowed checks if a process name is in the allowed list
 func (m *Manager) IsAllowed(name string) bool {
-	return m.AllowedProcessNames[name]
+	if m.AllowedProcessNames[name] {
+		return true
+	}
+	// Check prefix match for truncated names (e.g. "npm exec @upsta...")
+	for allowed := range m.AllowedProcessNames {
+		if strings.HasPrefix(name, allowed) {
+			return true
+		}
+	}
+	return false
 }
 
 // AllowProcess adds a process name to the allowed list
