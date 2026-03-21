@@ -101,6 +101,7 @@ func (s *Server) setupRoutes() {
 
 		// Processes
 		api.GET("/processes", s.handlers.ListProcesses)
+		api.GET("/processes/search", s.handlers.SearchProcesses)
 		api.POST("/processes/:pid/kill", s.handlers.KillProcess)
 
 		// Services (systemd)

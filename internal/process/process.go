@@ -3,6 +3,7 @@ package process
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,8 +20,11 @@ type Manager struct {
 func NewManager() *Manager {
 	return &Manager{
 		AllowedProcessNames: map[string]bool{
-			// Add allowed process names here
-			// By default, we don't allow killing any processes for safety
+			"claude":    true, // Claude Code CLI
+			"node":      true, // Claude Code runs as node processes
+			"bun":       true, // Telegram plugin runtime
+			"npx":       true, // MCP servers
+			"tmux":      true, // Terminal multiplexer sessions
 		},
 	}
 }
@@ -66,6 +70,28 @@ func (m *Manager) ListTop(n int) (*ProcessList, error) {
 	return &ProcessList{
 		Processes: list.Processes[:n],
 		Total:     list.Total,
+	}, nil
+}
+
+// Search returns processes matching a name or cmdline pattern
+func (m *Manager) Search(pattern string) (*ProcessList, error) {
+	list, err := m.List()
+	if err != nil {
+		return nil, err
+	}
+
+	pattern = strings.ToLower(pattern)
+	var matched []ProcessInfo
+	for _, p := range list.Processes {
+		if strings.Contains(strings.ToLower(p.Name), pattern) ||
+			strings.Contains(strings.ToLower(p.Cmdline), pattern) {
+			matched = append(matched, p)
+		}
+	}
+
+	return &ProcessList{
+		Processes: matched,
+		Total:     len(matched),
 	}, nil
 }
 

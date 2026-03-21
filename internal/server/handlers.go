@@ -194,6 +194,23 @@ func (h *Handlers) ListProcesses(c *gin.Context) {
 	c.JSON(http.StatusOK, processes)
 }
 
+// SearchProcesses handles GET /api/processes/search
+func (h *Handlers) SearchProcesses(c *gin.Context) {
+	query := c.Query("q")
+	if query == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "query parameter 'q' is required"})
+		return
+	}
+
+	processes, err := h.processManager.Search(query)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, processes)
+}
+
 // KillProcess handles POST /api/processes/:pid/kill
 func (h *Handlers) KillProcess(c *gin.Context) {
 	pidStr := c.Param("pid")
