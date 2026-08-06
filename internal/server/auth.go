@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/subtle"
 	"errors"
 	"strings"
 	"time"
@@ -29,9 +30,13 @@ func NewAuthService(apiKey, jwtSecret string) *AuthService {
 	}
 }
 
-// ValidateAPIKey validates an API key
+// ValidateAPIKey validates an API key. The comparison is constant-time so the
+// key cannot be recovered a byte at a time by timing repeated requests.
 func (a *AuthService) ValidateAPIKey(key string) bool {
-	return key != "" && key == a.apiKey
+	if key == "" || a.apiKey == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(key), []byte(a.apiKey)) == 1
 }
 
 // GenerateToken generates a new JWT token

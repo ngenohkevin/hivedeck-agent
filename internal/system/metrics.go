@@ -27,16 +27,12 @@ func (c *Collector) GetCPUInfo() (*CPUInfo, error) {
 		return nil, fmt.Errorf("failed to get cpu info: %w", err)
 	}
 
-	// Get CPU usage (total)
-	percentTotal, err := cpu.Percent(200*time.Millisecond, false)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get cpu percent: %w", err)
-	}
-
-	// Get per-CPU usage
+	// One sampling window, not two. Each cpu.Percent call sleeps for the whole
+	// interval, so asking separately for the total and the per-core numbers
+	// doubled the latency of every metrics read; the total is just the mean.
 	percentPerCPU, err := cpu.Percent(200*time.Millisecond, true)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get per-cpu percent: %w", err)
+		return nil, fmt.Errorf("failed to get cpu percent: %w", err)
 	}
 
 	// Get load average
@@ -54,8 +50,11 @@ func (c *Collector) GetCPUInfo() (*CPUInfo, error) {
 	}
 
 	var usageTotal float64
-	if len(percentTotal) > 0 {
-		usageTotal = percentTotal[0]
+	if len(percentPerCPU) > 0 {
+		for _, p := range percentPerCPU {
+			usageTotal += p
+		}
+		usageTotal /= float64(len(percentPerCPU))
 	}
 
 	return &CPUInfo{
@@ -84,17 +83,17 @@ func (c *Collector) GetMemoryInfo() (*MemoryInfo, error) {
 	}
 
 	return &MemoryInfo{
-		Total:        vmem.Total,
-		Available:    vmem.Available,
-		Used:         vmem.Used,
-		UsedPercent:  vmem.UsedPercent,
-		Free:         vmem.Free,
-		Buffers:      vmem.Buffers,
-		Cached:       vmem.Cached,
-		SwapTotal:    swap.Total,
-		SwapUsed:     swap.Used,
-		SwapFree:     swap.Free,
-		SwapPercent:  swap.UsedPercent,
+		Total:       vmem.Total,
+		Available:   vmem.Available,
+		Used:        vmem.Used,
+		UsedPercent: vmem.UsedPercent,
+		Free:        vmem.Free,
+		Buffers:     vmem.Buffers,
+		Cached:      vmem.Cached,
+		SwapTotal:   swap.Total,
+		SwapUsed:    swap.Used,
+		SwapFree:    swap.Free,
+		SwapPercent: swap.UsedPercent,
 	}, nil
 }
 

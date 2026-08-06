@@ -27,19 +27,19 @@ type DirectoryListing struct {
 
 // FileContent represents the content of a file
 type FileContent struct {
-	Path     string `json:"path"`
-	Content  string `json:"content"`
-	Size     int64  `json:"size"`
-	Encoding string `json:"encoding"` // "utf-8" or "base64"
-	IsBinary bool   `json:"is_binary"`
-	Truncated bool  `json:"truncated"`
+	Path      string `json:"path"`
+	Content   string `json:"content"`
+	Size      int64  `json:"size"`
+	Encoding  string `json:"encoding"` // "utf-8" or "base64"
+	IsBinary  bool   `json:"is_binary"`
+	Truncated bool   `json:"truncated"`
 }
 
 // DiskUsageInfo represents disk usage for a path
 type DiskUsageInfo struct {
-	Path       string `json:"path"`
-	TotalSize  int64  `json:"total_size"`
-	FileCount  int    `json:"file_count"`
-	DirCount   int    `json:"dir_count"`
+	Path         string     `json:"path"`
+	TotalSize    int64      `json:"total_size"`
+	FileCount    int        `json:"file_count"`
+	DirCount     int        `json:"dir_count"`
 	LargestFiles []FileInfo `json:"largest_files,omitempty"`
 }

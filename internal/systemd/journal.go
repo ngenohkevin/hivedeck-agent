@@ -2,13 +2,19 @@ package systemd
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os/exec"
 	"strconv"
 	"time"
 )
+
+// maxJournalLine caps a single journald JSON record. Entries carrying a large
+// MESSAGE (stack traces, base64 blobs) routinely exceed bufio's 64KB default.
+const maxJournalLine = 4 * 1024 * 1024
 
 // JournalReader reads systemd journal logs
 type JournalReader struct{}
@@ -61,7 +67,7 @@ func (r *JournalReader) Query(ctx context.Context, query JournalQuery) (*LogStre
 	}, nil
 }
 
-// Follow streams journal entries in real-time
+// Follow streams journal entries in real-time until ctx is cancelled.
 func (r *JournalReader) Follow(ctx context.Context, unit string, entryChan chan<- JournalEntry) error {
 	args := []string{"--output=json", "--no-pager", "-f"}
 
@@ -69,6 +75,8 @@ func (r *JournalReader) Follow(ctx context.Context, unit string, entryChan chan<
 		args = append(args, "-u", unit)
 	}
 
+	// CommandContext kills the child when ctx is cancelled; the goroutine below
+	// still has to Wait on it or every closed log stream leaves a zombie.
 	cmd := exec.CommandContext(ctx, "journalctl", args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -80,7 +88,13 @@ func (r *JournalReader) Follow(ctx context.Context, unit string, entryChan chan<
 	}
 
 	go func() {
-		scanner := bufio.NewScanner(stdout)
+		// Wait must not run until the pipe is drained, so it lives here rather
+		// than in a second goroutine racing this one.
+		defer func() {
+			_ = cmd.Wait()
+		}()
+
+		scanner := newJournalScanner(stdout)
 		for scanner.Scan() {
 			entry, err := r.parseJSONLine(scanner.Bytes())
 			if err != nil {
@@ -94,12 +108,15 @@ func (r *JournalReader) Follow(ctx context.Context, unit string, entryChan chan<
 		}
 	}()
 
-	go func() {
-		<-ctx.Done()
-		cmd.Process.Kill()
-	}()
-
 	return nil
+}
+
+// newJournalScanner returns a scanner sized for journald's JSON output. The
+// default 64KB token limit silently ends the stream on a single long log line.
+func newJournalScanner(r io.Reader) *bufio.Scanner {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxJournalLine)
+	return scanner
 }
 
 // GetRecentLogs returns recent log entries for a unit
@@ -118,9 +135,7 @@ func (r *JournalReader) parseJSONOutput(output []byte) ([]JournalEntry, error) {
 	var entries []JournalEntry
 
 	// Each line is a separate JSON object
-	scanner := bufio.NewScanner(
-		&byteReader{data: output},
-	)
+	scanner := newJournalScanner(bytes.NewReader(output))
 
 	for scanner.Scan() {
 		entry, err := r.parseJSONLine(scanner.Bytes())
@@ -171,19 +186,4 @@ func (r *JournalReader) parseJSONLine(line []byte) (*JournalEntry, error) {
 	}
 
 	return entry, nil
-}
-
-// byteReader implements io.Reader for a byte slice
-type byteReader struct {
-	data []byte
-	pos  int
-}
-
-func (r *byteReader) Read(p []byte) (n int, err error) {
-	if r.pos >= len(r.data) {
-		return 0, fmt.Errorf("EOF")
-	}
-	n = copy(p, r.data[r.pos:])
-	r.pos += n
-	return n, nil
 }

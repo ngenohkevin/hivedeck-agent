@@ -31,17 +31,17 @@ type CPUInfo struct {
 
 // MemoryInfo contains memory usage information
 type MemoryInfo struct {
-	Total        uint64  `json:"total"`
-	Available    uint64  `json:"available"`
-	Used         uint64  `json:"used"`
-	UsedPercent  float64 `json:"used_percent"`
-	Free         uint64  `json:"free"`
-	Buffers      uint64  `json:"buffers"`
-	Cached       uint64  `json:"cached"`
-	SwapTotal    uint64  `json:"swap_total"`
-	SwapUsed     uint64  `json:"swap_used"`
-	SwapFree     uint64  `json:"swap_free"`
-	SwapPercent  float64 `json:"swap_percent"`
+	Total       uint64  `json:"total"`
+	Available   uint64  `json:"available"`
+	Used        uint64  `json:"used"`
+	UsedPercent float64 `json:"used_percent"`
+	Free        uint64  `json:"free"`
+	Buffers     uint64  `json:"buffers"`
+	Cached      uint64  `json:"cached"`
+	SwapTotal   uint64  `json:"swap_total"`
+	SwapUsed    uint64  `json:"swap_used"`
+	SwapFree    uint64  `json:"swap_free"`
+	SwapPercent float64 `json:"swap_percent"`
 }
 
 // DiskInfo contains disk partition information

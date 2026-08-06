@@ -23,15 +23,16 @@ import (
 
 // Handlers holds all HTTP handlers
 type Handlers struct {
-	cfg            *config.Config
-	cache          *cache.MetricsCache
+	cfg              *config.Config
+	cache            *cache.MetricsCache
 	metricsCollector *system.Collector
-	processManager *process.Manager
-	serviceManager *systemd.Manager
-	journalReader  *systemd.JournalReader
-	dockerManager  *docker.Manager
-	fileBrowser    *files.Browser
-	taskManager    *tasks.Manager
+	processManager   *process.Manager
+	serviceManager   *systemd.Manager
+	journalReader    *systemd.JournalReader
+	dockerManager    *docker.Manager
+	fileBrowser      *files.Browser
+	taskManager      *tasks.Manager
+	startedAt        time.Time
 }
 
 // NewHandlers creates a new handlers instance
@@ -45,6 +46,7 @@ func NewHandlers(cfg *config.Config) *Handlers {
 		journalReader:    systemd.NewJournalReader(),
 		fileBrowser:      files.NewBrowser(cfg.AllowedPaths),
 		taskManager:      tasks.NewManager(cfg.AllowedTasks),
+		startedAt:        time.Now(),
 	}
 
 	// Initialize Docker if enabled
@@ -61,9 +63,11 @@ func NewHandlers(cfg *config.Config) *Handlers {
 // HealthCheck handles GET /health
 func (h *Handlers) HealthCheck(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
-		"status":    "ok",
-		"timestamp": time.Now().UTC(),
-		"version":   "1.0.0",
+		"status":       "ok",
+		"timestamp":    time.Now().UTC(),
+		"version":      Version,
+		"built":        BuildTime,
+		"agent_uptime": time.Since(h.startedAt).Round(time.Second).String(),
 	})
 }
 
@@ -76,32 +80,43 @@ func (h *Handlers) GetInfo(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"hostname":  hostInfo.Hostname,
-		"os":        hostInfo.OS,
-		"platform":  hostInfo.Platform,
-		"kernel":    hostInfo.KernelVersion,
-		"arch":      hostInfo.KernelArch,
-		"uptime":    hostInfo.UptimeHuman,
-		"agent":     "hivedeck-agent",
-		"version":   "1.0.0",
+		"hostname": hostInfo.Hostname,
+		"os":       hostInfo.OS,
+		"platform": hostInfo.Platform,
+		"kernel":   hostInfo.KernelVersion,
+		"arch":     hostInfo.KernelArch,
+		"uptime":   hostInfo.UptimeHuman,
+		"agent":    "hivedeck-agent",
+		"version":  Version,
+		"built":    BuildTime,
+		"docker":   h.dockerManager != nil,
 	})
+}
+
+// allMetrics returns a full metrics snapshot, shared through the cache so that
+// N concurrent SSE clients cost one collection per interval rather than N.
+func (h *Handlers) allMetrics() (interface{}, error) {
+	if cached, found := h.cache.Get(cache.KeyAll); found {
+		return cached, nil
+	}
+
+	metrics, err := h.metricsCollector.GetAllMetrics()
+	if err != nil {
+		return nil, err
+	}
+
+	h.cache.Set(cache.KeyAll, metrics)
+	return metrics, nil
 }
 
 // GetAllMetrics handles GET /api/metrics
 func (h *Handlers) GetAllMetrics(c *gin.Context) {
-	cached, found := h.cache.Get(cache.KeyAll)
-	if found {
-		c.JSON(http.StatusOK, cached)
-		return
-	}
-
-	metrics, err := h.metricsCollector.GetAllMetrics()
+	metrics, err := h.allMetrics()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	h.cache.Set(cache.KeyAll, metrics)
 	c.JSON(http.StatusOK, metrics)
 }
 
@@ -253,6 +268,13 @@ func (h *Handlers) ListServices(c *gin.Context) {
 // GetService handles GET /api/services/:name
 func (h *Handlers) GetService(c *gin.Context) {
 	name := c.Param("name")
+
+	if !h.serviceManager.IsAllowed(name) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": fmt.Sprintf("service '%s' is not in allowed list", name),
+		})
+		return
+	}
 
 	service, err := h.serviceManager.Get(c.Request.Context(), name)
 	if err != nil {
@@ -414,20 +436,27 @@ func (h *Handlers) StreamEvents(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
+	// Emit once up front; otherwise every dashboard shows empty tiles for the
+	// first two seconds of every connection.
+	first := make(chan struct{}, 1)
+	first <- struct{}{}
+
 	c.Stream(func(w io.Writer) bool {
 		select {
+		case <-first:
 		case <-ticker.C:
-			metrics, err := h.metricsCollector.GetAllMetrics()
-			if err != nil {
-				c.SSEvent("error", gin.H{"error": err.Error()})
-				return true
-			}
-			data, _ := json.Marshal(metrics)
-			c.SSEvent("metrics", string(data))
-			return true
 		case <-ctx.Done():
 			return false
 		}
+
+		metrics, err := h.allMetrics()
+		if err != nil {
+			c.SSEvent("error", gin.H{"error": err.Error()})
+			return true
+		}
+		data, _ := json.Marshal(metrics)
+		c.SSEvent("metrics", string(data))
+		return true
 	})
 }
 
@@ -441,8 +470,11 @@ func (h *Handlers) ListContainers(c *gin.Context) {
 	}
 
 	all := c.Query("all") == "true"
+	// Container sizes make the daemon du(1) every layer - seconds on a busy
+	// host - so the dashboard's polling path must not pay for it by default.
+	withSize := c.Query("size") == "true"
 
-	containers, err := h.dockerManager.ListContainers(c.Request.Context(), all)
+	containers, err := h.dockerManager.ListContainers(c.Request.Context(), all, withSize)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -607,7 +639,7 @@ func (h *Handlers) GetDiskUsage(c *gin.Context) {
 		return
 	}
 
-	usage, err := h.fileBrowser.GetDiskUsage(path)
+	usage, err := h.fileBrowser.GetDiskUsage(c.Request.Context(), path)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if err.Error() == "access denied: path not in allowed list" {
@@ -644,8 +676,8 @@ func (h *Handlers) RunTask(c *gin.Context) {
 		confirm := c.Query("confirm")
 		if confirm != "true" {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error":   fmt.Sprintf("task '%s' is dangerous, add ?confirm=true to execute", name),
-				"task":    task,
+				"error": fmt.Sprintf("task '%s' is dangerous, add ?confirm=true to execute", name),
+				"task":  task,
 			})
 			return
 		}

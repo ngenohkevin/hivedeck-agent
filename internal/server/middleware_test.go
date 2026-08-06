@@ -141,7 +141,27 @@ func TestCORSMiddleware(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusNoContent, w.Code)
+	// With credentials enabled the wildcard has to be reflected back as the
+	// concrete origin - browsers reject "*" alongside Allow-Credentials.
+	assert.Equal(t, "http://example.com", w.Header().Get("Access-Control-Allow-Origin"))
+	assert.Equal(t, "true", w.Header().Get("Access-Control-Allow-Credentials"))
+	assert.Equal(t, "Origin", w.Header().Get("Vary"))
+}
+
+func TestCORSMiddleware_NoOrigin(t *testing.T) {
+	router := gin.New()
+	router.Use(CORSMiddleware([]string{"*"}))
+	router.GET("/test", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
+	// A non-browser caller (curl, the dashboard's server side) sends no Origin.
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
 	assert.Equal(t, "*", w.Header().Get("Access-Control-Allow-Origin"))
+	assert.Empty(t, w.Header().Get("Access-Control-Allow-Credentials"))
 }
 
 func TestCORSMiddleware_SpecificOrigins(t *testing.T) {
@@ -164,6 +184,37 @@ func TestCORSMiddleware_SpecificOrigins(t *testing.T) {
 	w = httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"))
+	assert.Empty(t, w.Header().Get("Access-Control-Allow-Credentials"))
+}
+
+func TestLocalOnlyMiddleware(t *testing.T) {
+	router := gin.New()
+	router.Use(LocalOnlyMiddleware())
+	router.GET("/setup", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
+	tests := []struct {
+		name       string
+		remoteAddr string
+		wantStatus int
+	}{
+		{"loopback", "127.0.0.1:5000", http.StatusOK},
+		{"private LAN", "192.168.1.20:5000", http.StatusOK},
+		{"tailscale", "100.85.91.122:5000", http.StatusOK},
+		{"public", "203.0.113.7:5000", http.StatusForbidden},
+		{"public near tailscale range", "100.128.0.1:5000", http.StatusForbidden},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/setup", nil)
+			req.RemoteAddr = tt.remoteAddr
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			assert.Equal(t, tt.wantStatus, w.Code)
+		})
+	}
 }
 
 func TestRecoveryMiddleware(t *testing.T) {

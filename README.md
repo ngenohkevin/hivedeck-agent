@@ -307,27 +307,71 @@ sudo tailscale serve --https=443 off
 
 ## Security
 
-- API key authentication required for all endpoints
+- API key authentication required for all endpoints, compared in constant time
 - JWT token support for session-based auth
-- Rate limiting (configurable RPS)
+- Rate limiting (configurable RPS), keyed on the real peer address — no proxy
+  is trusted, so `X-Forwarded-For` cannot be used to mint fresh buckets
 - Service allowlist restricts which services can be managed
-- File browser restricted to allowed paths
+- File browser restricted to allowed paths, resolved through symlinks so a
+  link inside an allowed directory cannot reach outside it
 - Task runner only executes pre-defined commands
 - CORS configuration for frontend access
+- Unauthenticated `/setup` endpoints only answer loopback, LAN and Tailscale
+  callers — in setup mode anyone who reaches the port could otherwise claim
+  the agent
+- Deployments bind the listener to Tailscale rather than `0.0.0.0`
+
+> The agent exposes metrics, journald, a file browser and service/container
+> control, and runs as root. It must never be reachable from the public
+> internet. See `SECURITY.md` in the `dev` repo — on 2026-06-08 this agent was
+> found listening on public IPv6 because `ip6tables` was not filtered
+> alongside `iptables`.
 
 ## CI/CD
 
-The agent deploys automatically via GitHub Actions when pushed to `main`:
+Pushing to `main` runs `gofmt`/`go vet`/tests, builds ARM64 + AMD64 binaries
+with the git SHA stamped in, then deploys to every host in the matrix in
+parallel over Tailscale.
 
-1. Runs tests
-2. Builds for ARM64
-3. Connects to Tailscale
-4. Deploys to Raspberry Pi
-5. Verifies health endpoint
+| Host | Arch | Install dir | Docker |
+|------|------|-------------|--------|
+| `pi` | arm64 | `/home/ngenoh/dev/backend/hivedeck-agent` | no |
+| `vps` | amd64 | `/opt/hivedeck-agent` | yes |
+| `vps2` | amd64 | `/opt/hivedeck-agent` | yes |
+| `iopulse` | amd64 | `/opt/hivedeck-agent` | yes |
+
+Adding a host is one entry in `strategy.matrix.include` in
+`.github/workflows/deploy.yml` — the host only needs to be tagged
+`tag:servers` with Tailscale SSH enabled.
+
+The per-host install runs `scripts/remote-deploy.sh`, piped to the remote
+shell. It is idempotent:
+
+- **`.env` and the unit file are only created when missing**, so anything
+  tuned by hand on a host survives redeploys. Changing `allowed_services` in
+  the matrix therefore only affects hosts that have never been deployed to;
+  edit `.env` on the host to change an existing one.
+- **First install generates a random 32-byte API key** (`openssl rand -hex
+  32`) and writes `.env` mode 600. Read the key back with:
+  ```bash
+  ssh root@<host> "grep '^API_KEY=' /opt/hivedeck-agent/.env"
+  ```
+  then register the host in the Hivedeck dashboard.
+- **The agent binds to the host's Tailscale address**, falling back to
+  loopback — never `0.0.0.0`. Set `BIND_TAILSCALE=false` to opt out.
+- **A failed health check rolls back** to the previous binary and fails the
+  job.
 
 Required secrets:
 - `TS_OAUTH_CLIENT_ID` - Tailscale OAuth client ID
 - `TS_OAUTH_SECRET` - Tailscale OAuth secret
+
+Confirm what is actually running on a host:
+
+```bash
+ssh root@<host> '/opt/hivedeck-agent/hivedeck-agent -version'
+curl -s http://<host>:8091/health   # reports version + build time
+```
 
 ## License
 

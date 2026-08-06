@@ -20,16 +20,16 @@ type Manager struct {
 func NewManager() *Manager {
 	return &Manager{
 		AllowedProcessNames: map[string]bool{
-			"claude":          true, // Claude Code CLI
-			"node":            true, // Claude Code runs as node processes
-			"bun":             true, // Telegram plugin runtime
-			"npx":             true, // MCP servers
-			"npm exec":        true, // MCP servers (npm exec form)
-			"npm":             true, // npm processes
-			"python":          true, // Python MCP servers (routeros)
-			"tmux: server":    true, // tmux server process
-			"tmux":            true, // tmux processes
-			"uvx":             true, // Python tool runner (jellyfin MCP)
+			"claude":       true, // Claude Code CLI
+			"node":         true, // Claude Code runs as node processes
+			"bun":          true, // Telegram plugin runtime
+			"npx":          true, // MCP servers
+			"npm exec":     true, // MCP servers (npm exec form)
+			"npm":          true, // npm processes
+			"python":       true, // Python MCP servers (routeros)
+			"tmux: server": true, // tmux server process
+			"tmux":         true, // tmux processes
+			"uvx":          true, // Python tool runner (jellyfin MCP)
 		},
 	}
 }

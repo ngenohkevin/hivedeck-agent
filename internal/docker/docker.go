@@ -31,6 +31,15 @@ func NewManager() (*Manager, error) {
 	}, nil
 }
 
+// shortID truncates a container ID to the usual 12-character display form
+// without assuming the daemon always hands back a full-length ID.
+func shortID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
+}
+
 // IsAvailable checks if Docker is available
 func (m *Manager) IsAvailable(ctx context.Context) bool {
 	_, err := m.client.Ping(ctx)
@@ -42,11 +51,12 @@ func (m *Manager) Close() error {
 	return m.client.Close()
 }
 
-// ListContainers returns all containers
-func (m *Manager) ListContainers(ctx context.Context, all bool) (*ContainerList, error) {
+// ListContainers returns all containers. withSize asks the daemon to compute
+// per-container disk usage, which is expensive - leave it off for polling.
+func (m *Manager) ListContainers(ctx context.Context, all, withSize bool) (*ContainerList, error) {
 	containers, err := m.client.ContainerList(ctx, container.ListOptions{
 		All:  all,
-		Size: true,
+		Size: withSize,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list containers: %w", err)
@@ -54,9 +64,14 @@ func (m *Manager) ListContainers(ctx context.Context, all bool) (*ContainerList,
 
 	var result []ContainerInfo
 	for _, c := range containers {
+		name := ""
+		if len(c.Names) > 0 {
+			name = strings.TrimPrefix(c.Names[0], "/")
+		}
+
 		info := ContainerInfo{
-			ID:         c.ID[:12],
-			Name:       strings.TrimPrefix(c.Names[0], "/"),
+			ID:         shortID(c.ID),
+			Name:       name,
 			Image:      c.Image,
 			ImageID:    c.ImageID,
 			State:      c.State,
@@ -109,7 +124,7 @@ func (m *Manager) GetContainer(ctx context.Context, id string) (*ContainerInfo, 
 	}
 
 	info := &ContainerInfo{
-		ID:      inspect.ID[:12],
+		ID:      shortID(inspect.ID),
 		Name:    strings.TrimPrefix(inspect.Name, "/"),
 		Image:   inspect.Config.Image,
 		ImageID: inspect.Image,

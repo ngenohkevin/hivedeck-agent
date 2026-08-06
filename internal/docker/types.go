@@ -53,17 +53,17 @@ type ContainerAction struct {
 
 // ContainerStats represents container resource statistics
 type ContainerStats struct {
-	ID           string  `json:"id"`
-	Name         string  `json:"name"`
-	CPUPercent   float64 `json:"cpu_percent"`
-	MemoryUsage  uint64  `json:"memory_usage"`
-	MemoryLimit  uint64  `json:"memory_limit"`
+	ID            string  `json:"id"`
+	Name          string  `json:"name"`
+	CPUPercent    float64 `json:"cpu_percent"`
+	MemoryUsage   uint64  `json:"memory_usage"`
+	MemoryLimit   uint64  `json:"memory_limit"`
 	MemoryPercent float64 `json:"memory_percent"`
-	NetworkRx    uint64  `json:"network_rx"`
-	NetworkTx    uint64  `json:"network_tx"`
-	BlockRead    uint64  `json:"block_read"`
-	BlockWrite   uint64  `json:"block_write"`
-	PIDs         uint64  `json:"pids"`
+	NetworkRx     uint64  `json:"network_rx"`
+	NetworkTx     uint64  `json:"network_tx"`
+	BlockRead     uint64  `json:"block_read"`
+	BlockWrite    uint64  `json:"block_write"`
+	PIDs          uint64  `json:"pids"`
 }
 
 // LogOptions represents options for fetching container logs

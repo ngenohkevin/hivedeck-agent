@@ -2,6 +2,7 @@ package server
 
 import (
 	"log"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -42,7 +43,7 @@ func AuthMiddleware(auth *AuthService) gin.HandlerFunc {
 	}
 }
 
-// RateLimiter implements a simple rate limiter
+// RateLimiter implements a simple sliding-window rate limiter
 type RateLimiter struct {
 	requests map[string][]time.Time
 	mu       sync.Mutex
@@ -52,11 +53,16 @@ type RateLimiter struct {
 
 // NewRateLimiter creates a new rate limiter
 func NewRateLimiter(requestsPerSecond int) *RateLimiter {
-	return &RateLimiter{
+	rl := &RateLimiter{
 		requests: make(map[string][]time.Time),
 		limit:    requestsPerSecond,
 		window:   time.Second,
 	}
+
+	// Without this the map grows one permanent entry per client IP ever seen.
+	go rl.sweep(time.Minute)
+
+	return rl
 }
 
 // Allow checks if a request should be allowed
@@ -67,8 +73,8 @@ func (rl *RateLimiter) Allow(key string) bool {
 	now := time.Now()
 	windowStart := now.Add(-rl.window)
 
-	// Clean old requests
-	var recent []time.Time
+	// Drop timestamps that fell out of the window, in place.
+	recent := rl.requests[key][:0]
 	for _, t := range rl.requests[key] {
 		if t.After(windowStart) {
 			recent = append(recent, t)
@@ -82,6 +88,25 @@ func (rl *RateLimiter) Allow(key string) bool {
 
 	rl.requests[key] = append(recent, now)
 	return true
+}
+
+// sweep drops clients that have gone quiet, so the map tracks active callers
+// rather than every IP the agent has ever answered.
+func (rl *RateLimiter) sweep(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		cutoff := time.Now().Add(-rl.window)
+
+		rl.mu.Lock()
+		for key, times := range rl.requests {
+			if len(times) == 0 || times[len(times)-1].Before(cutoff) {
+				delete(rl.requests, key)
+			}
+		}
+		rl.mu.Unlock()
+	}
 }
 
 // RateLimitMiddleware creates rate limiting middleware
@@ -139,17 +164,37 @@ func RecoveryMiddleware() gin.HandlerFunc {
 
 // CORSMiddleware handles CORS headers
 func CORSMiddleware(allowedOrigins []string) gin.HandlerFunc {
-	allowAll := len(allowedOrigins) == 1 && allowedOrigins[0] == "*"
+	allowAll := false
+	for _, o := range allowedOrigins {
+		if o == "*" {
+			allowAll = true
+			break
+		}
+	}
 
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
 
-		if allowAll {
-			c.Header("Access-Control-Allow-Origin", "*")
-		} else {
+		// The response body varies with Origin, so it must not be cached under
+		// one origin and replayed to another.
+		c.Header("Vary", "Origin")
+
+		switch {
+		case allowAll:
+			// "*" and Allow-Credentials:true are mutually exclusive per the
+			// CORS spec - browsers reject the pair outright. Echo the caller's
+			// origin so credentialed requests actually work.
+			if origin != "" {
+				c.Header("Access-Control-Allow-Origin", origin)
+				c.Header("Access-Control-Allow-Credentials", "true")
+			} else {
+				c.Header("Access-Control-Allow-Origin", "*")
+			}
+		default:
 			for _, allowed := range allowedOrigins {
-				if origin == allowed {
+				if origin != "" && origin == allowed {
 					c.Header("Access-Control-Allow-Origin", origin)
+					c.Header("Access-Control-Allow-Credentials", "true")
 					break
 				}
 			}
@@ -157,7 +202,6 @@ func CORSMiddleware(allowedOrigins []string) gin.HandlerFunc {
 
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization")
-		c.Header("Access-Control-Allow-Credentials", "true")
 		c.Header("Access-Control-Max-Age", "86400")
 
 		if c.Request.Method == "OPTIONS" {
@@ -167,4 +211,37 @@ func CORSMiddleware(allowedOrigins []string) gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// LocalOnlyMiddleware rejects requests that did not arrive over loopback, a
+// private LAN or the Tailscale CGNAT range.
+//
+// It fronts the unauthenticated /setup endpoints: in setup mode anyone who can
+// reach the port can claim the agent by POSTing an API key, so the blast radius
+// has to stay off the public internet even if a firewall rule is missed.
+func LocalOnlyMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ip := net.ParseIP(c.ClientIP())
+		if ip == nil || !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || isTailscaleIP(ip)) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": "setup is only available from loopback, LAN or Tailscale",
+			})
+			return
+		}
+		c.Next()
+	}
+}
+
+// tailscaleCGNAT is 100.64.0.0/10, the range Tailscale assigns to tailnet nodes.
+var tailscaleCGNAT = &net.IPNet{
+	IP:   net.IPv4(100, 64, 0, 0),
+	Mask: net.CIDRMask(10, 32),
+}
+
+func isTailscaleIP(ip net.IP) bool {
+	if v4 := ip.To4(); v4 != nil {
+		return tailscaleCGNAT.Contains(v4)
+	}
+	// Tailscale's IPv6 ULA range.
+	return len(ip) == net.IPv6len && ip[0] == 0xfd && ip[1] == 0x7a
 }

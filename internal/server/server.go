@@ -37,6 +37,14 @@ func New(cfg *config.Config) *Server {
 
 	router := gin.New()
 
+	// Gin trusts every proxy by default, which makes c.ClientIP() return
+	// whatever X-Forwarded-For the caller sends. Nothing fronts this agent -
+	// clients connect to it directly over Tailscale - so trust no proxy and
+	// use the real peer address. Otherwise the rate limiter is bypassed by
+	// rotating a header, the access log records attacker-chosen IPs, and the
+	// loopback/LAN restriction on /setup is spoofable.
+	_ = router.SetTrustedProxies(nil)
+
 	auth := NewAuthService(cfg.APIKey, cfg.JWTSecret)
 	limiter := NewRateLimiter(cfg.RateLimitRPS)
 	handlers := NewHandlers(cfg)
@@ -75,9 +83,10 @@ func (s *Server) setupRoutes() {
 	// Health check (no auth)
 	s.router.GET("/health", s.handlers.HealthCheck)
 
-	// Setup routes (no auth required in setup mode)
+	// Setup routes (no auth required in setup mode, so restrict them by source)
 	if s.cfg.SetupMode {
 		setup := s.router.Group("/setup")
+		setup.Use(LocalOnlyMiddleware())
 		{
 			setup.GET("", s.setupHandlers.SetupPage)
 			setup.POST("/generate", s.setupHandlers.GenerateKey)
@@ -161,7 +170,13 @@ func (s *Server) Run() error {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
+	// ListenAndServe returns as soon as Shutdown is called, so Run has to wait
+	// on this before exiting or the process dies mid-drain.
+	shutdownDone := make(chan struct{})
+
 	go func() {
+		defer close(shutdownDone)
+
 		<-quit
 		log.Println("Shutting down server...")
 
@@ -173,11 +188,13 @@ func (s *Server) Run() error {
 		}
 	}()
 
-	log.Printf("Starting Hivedeck Agent on %s", s.cfg.Addr())
+	log.Printf("Starting Hivedeck Agent %s on %s", Version, s.cfg.Addr())
 
 	if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("failed to start server: %w", err)
 	}
+
+	<-shutdownDone
 
 	// Clean up
 	if err := s.handlers.Close(); err != nil {
@@ -186,6 +203,22 @@ func (s *Server) Run() error {
 
 	log.Println("Server stopped")
 	return nil
+}
+
+// Build metadata, populated from main via SetBuildInfo.
+var (
+	Version   = "dev"
+	BuildTime = "unknown"
+)
+
+// SetBuildInfo records the version stamped into the binary at build time.
+func SetBuildInfo(version, buildTime string) {
+	if version != "" {
+		Version = version
+	}
+	if buildTime != "" {
+		BuildTime = buildTime
+	}
 }
 
 // Router returns the Gin router (for testing)

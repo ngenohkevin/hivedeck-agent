@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -181,10 +182,8 @@ func getEnvFile() string {
 	}
 
 	// Get executable directory
-	exe, err := os.Executable()
-	if err == nil {
-		dir := strings.TrimSuffix(exe, "/hivedeck-agent")
-		envPath := dir + "/.env"
+	if exe, err := os.Executable(); err == nil {
+		envPath := filepath.Join(filepath.Dir(exe), ".env")
 		if _, err := os.Stat(envPath); err == nil {
 			return envPath
 		}
@@ -280,10 +279,12 @@ func (c *Config) Addr() string {
 	return fmt.Sprintf("%s:%d", c.Host, c.Port)
 }
 
-// IsServiceAllowed checks if a service can be managed
+// IsServiceAllowed checks if a service can be managed. "*" allows everything,
+// matching how systemd.Manager reads the same list.
 func (c *Config) IsServiceAllowed(service string) bool {
+	service = strings.TrimSuffix(service, ".service")
 	for _, s := range c.AllowedServices {
-		if s == service {
+		if s == "*" || strings.TrimSuffix(s, ".service") == service {
 			return true
 		}
 	}
@@ -321,9 +322,24 @@ func getEnvBool(key string, defaultValue bool) bool {
 	return defaultValue
 }
 
+// getEnvSlice parses a comma-separated env var, trimming whitespace and
+// dropping empties so that "docker, nginx," yields exactly two entries rather
+// than a silently-unmatchable " nginx" and "".
 func getEnvSlice(key string, defaultValue []string) []string {
-	if value := os.Getenv(key); value != "" {
-		return strings.Split(value, ",")
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
 	}
-	return defaultValue
+
+	var out []string
+	for _, part := range strings.Split(value, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+
+	if len(out) == 0 {
+		return defaultValue
+	}
+	return out
 }

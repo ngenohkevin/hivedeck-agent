@@ -1,6 +1,7 @@
 package files
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"io/fs"
@@ -19,6 +20,8 @@ const (
 	MaxFileSize = 1 * 1024 * 1024
 	// MaxDirEntries is the maximum number of directory entries to return
 	MaxDirEntries = 1000
+	// TopFilesCount is how many of the largest files a disk usage scan reports
+	TopFilesCount = 10
 )
 
 // Browser handles file system operations (read-only)
@@ -62,7 +65,11 @@ func (b *Browser) GetAllowedPaths() []string {
 	return b.allowedPaths
 }
 
-// IsPathAllowed checks if a path is within allowed directories
+// IsPathAllowed checks if a path is within allowed directories.
+//
+// The path is resolved through symlinks first: a lexical check alone would let
+// a symlink inside an allowed directory (say /tmp/x -> /root) hand out the
+// whole filesystem, and the agent runs as root.
 func (b *Browser) IsPathAllowed(path string) bool {
 	if b.allowAll {
 		return true
@@ -72,9 +79,13 @@ func (b *Browser) IsPathAllowed(path string) bool {
 	if err != nil {
 		return false
 	}
-
-	// Clean the path to prevent directory traversal
 	absPath = filepath.Clean(absPath)
+
+	// EvalSymlinks fails on a path that does not exist yet; fall back to the
+	// lexical form so callers still get "not found" rather than "denied".
+	if resolved, err := filepath.EvalSymlinks(absPath); err == nil {
+		absPath = resolved
+	}
 
 	for _, allowed := range b.allowedPaths {
 		allowedAbs, err := filepath.Abs(allowed)
@@ -82,13 +93,29 @@ func (b *Browser) IsPathAllowed(path string) bool {
 			continue
 		}
 		allowedAbs = filepath.Clean(allowedAbs)
+		if resolved, err := filepath.EvalSymlinks(allowedAbs); err == nil {
+			allowedAbs = resolved
+		}
 
-		if strings.HasPrefix(absPath, allowedAbs) {
+		if isWithin(absPath, allowedAbs) {
 			return true
 		}
 	}
 
 	return false
+}
+
+// isWithin reports whether path is base itself or sits beneath it. A plain
+// strings.HasPrefix would also match siblings: "/etc" would allow "/etcpasswd"
+// and "/opt" would allow "/opt-backup".
+func isWithin(path, base string) bool {
+	if path == base {
+		return true
+	}
+	if base == string(filepath.Separator) {
+		return strings.HasPrefix(path, base)
+	}
+	return strings.HasPrefix(path, base+string(filepath.Separator))
 }
 
 // ListDirectory returns the contents of a directory
@@ -208,8 +235,12 @@ func (b *Browser) ReadFile(path string) (*FileContent, error) {
 	}, nil
 }
 
-// GetDiskUsage returns disk usage information for a path
-func (b *Browser) GetDiskUsage(path string) (*DiskUsageInfo, error) {
+// GetDiskUsage returns disk usage information for a path.
+//
+// The walk stops when ctx is cancelled (the client hung up) and only ever holds
+// the running top-N in memory - collecting every file first and sorting at the
+// end would allocate a FileInfo per file, which on a large tree is gigabytes.
+func (b *Browser) GetDiskUsage(ctx context.Context, path string) (*DiskUsageInfo, error) {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("invalid path: %w", err)
@@ -221,29 +252,52 @@ func (b *Browser) GetDiskUsage(path string) (*DiskUsageInfo, error) {
 
 	var totalSize int64
 	var fileCount, dirCount int
-	var largestFiles []FileInfo
+	largest := make([]FileInfo, 0, TopFilesCount+1)
+	checked := 0
 
 	err = filepath.WalkDir(absPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // Skip errors
 		}
 
-		if d.IsDir() {
-			dirCount++
-		} else {
-			fileCount++
-			info, err := d.Info()
-			if err == nil {
-				totalSize += info.Size()
-
-				// Track largest files
-				fileInfo := FileInfo{
-					Name: d.Name(),
-					Path: path,
-					Size: info.Size(),
-				}
-				largestFiles = append(largestFiles, fileInfo)
+		// Checking every entry would cost a select per file; once per batch is
+		// responsive enough. The %512==1 form also covers the very first entry,
+		// so an already-cancelled caller never starts a walk.
+		checked++
+		if checked%512 == 1 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
 			}
+		}
+
+		if d.IsDir() {
+			// Do not follow directory symlinks out of the tree, and never
+			// recurse into another filesystem's worth of work.
+			dirCount++
+			return nil
+		}
+
+		fileCount++
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		totalSize += info.Size()
+
+		// Keep only the running top N, sorted descending.
+		if len(largest) == TopFilesCount && info.Size() <= largest[len(largest)-1].Size {
+			return nil
+		}
+		idx := sort.Search(len(largest), func(i int) bool {
+			return largest[i].Size < info.Size()
+		})
+		largest = append(largest, FileInfo{})
+		copy(largest[idx+1:], largest[idx:])
+		largest[idx] = FileInfo{Name: d.Name(), Path: path, Size: info.Size()}
+		if len(largest) > TopFilesCount {
+			largest = largest[:TopFilesCount]
 		}
 
 		return nil
@@ -253,20 +307,12 @@ func (b *Browser) GetDiskUsage(path string) (*DiskUsageInfo, error) {
 		return nil, fmt.Errorf("failed to walk directory: %w", err)
 	}
 
-	// Sort and keep top 10 largest files
-	sort.Slice(largestFiles, func(i, j int) bool {
-		return largestFiles[i].Size > largestFiles[j].Size
-	})
-	if len(largestFiles) > 10 {
-		largestFiles = largestFiles[:10]
-	}
-
 	return &DiskUsageInfo{
 		Path:         absPath,
 		TotalSize:    totalSize,
 		FileCount:    fileCount,
 		DirCount:     dirCount,
-		LargestFiles: largestFiles,
+		LargestFiles: largest,
 	}, nil
 }
 
