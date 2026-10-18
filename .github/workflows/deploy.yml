@@ -62,8 +62,10 @@ jobs:
             arch: arm64
             dir: /home/ngenoh/dev/backend/hivedeck-agent
             docker_enabled: "false"
-            allowed_services: "routerctl-agent,hivedeck-agent,docker,nginx,ssh,tailscaled"
-            allowed_paths: "/var/log,/etc,/home,/opt"
+            # The dashboard runs on iopulse, a public box. Keep the sweepers (they hold
+            # the HD seeds under /etc), ssh and tailscaled out of its reach.
+            allowed_services: "routerctl-agent,hivedeck-agent,debrid-vault,hifi-api,jellyfin,pihole-FTL,stubby,unbound,mikrotik-syslog,nut-server,nut-monitor"
+            allowed_paths: "/var/log"
           - name: vps
             host: vps
             arch: amd64
@@ -87,6 +89,14 @@ jobs:
             docker_enabled: "true"
             allowed_services: "docker,ssh,tailscaled,hivedeck-agent"
             allowed_paths: "/var/log,/etc,/opt"
+          - name: engage-nj
+            host: engage-nj
+            arch: amd64
+            dir: /opt/hivedeck-agent
+            docker_enabled: "false"
+            # /opt holds the bot's account sessions, so the file browser gets logs only.
+            allowed_services: "engage-claim,engage-claim-api,hivedeck-agent"
+            allowed_paths: "/var/log"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
