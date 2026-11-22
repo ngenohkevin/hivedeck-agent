@@ -97,6 +97,15 @@ jobs:
             # /opt holds the bot's account sessions, so the file browser gets logs only.
             allowed_services: "engage-claim,engage-claim-api,hivedeck-agent"
             allowed_paths: "/var/log"
+          - name: engage-solo
+            host: engage-solo
+            arch: amd64
+            dir: /opt/hivedeck-agent
+            docker_enabled: "false"
+            # The second Engage Claim bot. Same reasoning as engage-nj: its account
+            # sessions live under /opt, so the file browser gets logs only.
+            allowed_services: "engage-claim,engage-claim-api,hivedeck-agent"
+            allowed_paths: "/var/log"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
